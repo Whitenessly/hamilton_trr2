@@ -1,6 +1,7 @@
 # Bài tập lớn - Toán Rời Rạc 2 - Nhóm 6
 
 **Hamilton Simulator** - Ứng dụng mô phỏng đường đi Hamilton trên đồ thị
+- Truy cập [đường dẫn này](https://trr2.alithw.qzz.io/) để xem trực tiếp trên web mà không cần chạy.
 
 ## 📋 Giới thiệu
 
