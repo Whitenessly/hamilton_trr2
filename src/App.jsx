@@ -1306,7 +1306,7 @@ export default function App() {
                     <Cpu size={20} className="text-blue-500 dark:text-blue-400" /> Bộ điều khiển
                   </h2>
                   <button onClick={resetVisualizer} className="px-2 py-1.5 bg-white dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-500/20 text-slate-600 hover:text-red-500 dark:text-slate-200 border border-slate-300 dark:border-slate-700 hover:border-red-300 dark:hover:border-red-500/50 rounded text-sm font-bold flex items-center gap-1 transition shadow-sm">
-                    <RotateCcw size={14} /> <span className="hidden sm:inline">Reset</span>
+                    <RotateCcw size={18} /> <span className="hidden sm:inline">Reset</span>
                   </button>
                 </div>
 
