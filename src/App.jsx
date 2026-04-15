@@ -1348,7 +1348,7 @@ export default function App() {
                   <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Nhanh</span>
 
                   <button disabled={isPlayMode} onClick={() => setShowLogs(!showLogs)} className={`p-1.5 ml-1 rounded transition text-xs flex items-center justify-center border shadow-sm ${isPlayMode ? 'cursor-not-allowed' : ''} ${showLogs ? 'bg-blue-50 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-transparent' : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-transparent'}`} title="Bật/Tắt Log Tiến trình">
-                    {showLogs ? <Eye size={16} /> : <EyeOff size={16} />}
+                    {showLogs ? <Eye size={20} /> : <EyeOff size={20} />}
                   </button>
                 </div>
               </div>
