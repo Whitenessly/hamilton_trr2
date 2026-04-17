@@ -1,7 +1,11 @@
+@config '../tailwind.config.js';
+@import "tailwindcss";
+
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
+
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -12,5 +16,3 @@
 *:focus {
   outline: none;
 }
-
-@import "tailwindcss";

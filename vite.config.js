@@ -7,5 +7,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 3001,
+    host: true,
+    allowedHosts: [
+      'trr2.alithw.qzz.io', 
+    ]
   },
 })
