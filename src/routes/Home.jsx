@@ -5,7 +5,7 @@ import {
   MapPin, Trash, Cpu, ChevronRight,
   ZoomIn, ZoomOut, Maximize, Zap, List,
   Eye, EyeOff, Terminal, ChevronDown, ChevronUp, Map as MapIcon, X, GripHorizontal, Menu,
-  Sun, Moon, Settings2, Gamepad2, RefreshCw
+  Sun, Moon, Settings2, Gamepad2, RefreshCw, Dices
 } from 'lucide-react';
 
 const STORAGE_KEY = 'hamiltonian_map_save_v7';
@@ -60,7 +60,7 @@ const MAP_LEVELS = [
   }
 ];
 
-export default function Home() {
+export default function App() {
   // --- THEME & RESPONSIVE STATE ---
   const [theme, setTheme] = useState('dark');
   const [showMobileLeft, setShowMobileLeft] = useState(false);
@@ -74,7 +74,7 @@ export default function Home() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  const [currentLevel, setCurrentLevel] = useState(0); // number hoặc 'custom'
+  const [currentLevel, setCurrentLevel] = useState(0); // number hoặc 'custom' hoặc 'random'
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [nextNodeId, setNextNodeId] = useState(1);
@@ -95,12 +95,18 @@ export default function Home() {
   
   // State quản lý mảng đường đi tự chọn trong Game Mode
   const [gamePath, setGamePath] = useState([]);
-  const didStartNewPath = useRef(false); // Đánh dấu nếu đường đi gamePath vừa mới bắt đầu
+  const didStartNewPath = useRef(false);
+
+  // State cho Random Map Modal
+  const [showRandomModal, setShowRandomModal] = useState(false);
+  const [randMinNodes, setRandMinNodes] = useState(3);
+  const [randMaxNodes, setRandMaxNodes] = useState(6);
+  const [randEdgePercent, setRandEdgePercent] = useState(30);
 
   // Sidebar Widths & Toggle
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
-  const [leftPanelWidth, setLeftPanelWidth] = useState(250); // Mặc định ~250px
-  const [rightPanelWidth, setRightPanelWidth] = useState(384); // Mặc định ~384px
+  const [leftPanelWidth, setLeftPanelWidth] = useState(250); 
+  const [rightPanelWidth, setRightPanelWidth] = useState(384); 
 
   // System Log Resizing
   const [logHeight, setLogHeight] = useState(200);
@@ -139,46 +145,28 @@ export default function Home() {
     }
   }, []);
 
-  // Đồng bộ class 'dark' lên thẻ <html> và quét sạch các thẻ cha để ép ghi đè môi trường preview
+  // Đồng bộ class 'dark'
   useEffect(() => {
     const wrapper = document.getElementById('hamilton-app-wrapper');
-
     const syncTheme = () => {
       const elementsToUpdate = new Set([document.documentElement, document.body]);
-
-      // Môi trường Canvas thường bọc code trong <div id="root" class="dark">
-      // Mình cần quét ngược lên và gỡ bỏ triệt để class 'dark' khỏi TẤT CẢ các thẻ cha
       let current = wrapper?.parentElement;
       while (current) {
         elementsToUpdate.add(current);
         current = current.parentElement;
       }
-
       elementsToUpdate.forEach(el => {
         if (el && el.classList) {
-          if (isDark) {
-            el.classList.add('dark');
-          } else {
-            el.classList.remove('dark');
-          }
+          if (isDark) el.classList.add('dark');
+          else el.classList.remove('dark');
         }
       });
     };
-
     syncTheme();
-
-    // Khóa chặt theme: Dùng MutationObserver để canh chừng nếu hệ thống bên ngoài ép thêm class dark trở lại
-    const observer = new MutationObserver(() => {
-      syncTheme();
-    });
-
+    const observer = new MutationObserver(() => syncTheme());
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
-
-    if (wrapper?.parentElement) {
-      observer.observe(wrapper.parentElement, { attributes: true, attributeFilter: ['class'] });
-    }
-
+    if (wrapper?.parentElement) observer.observe(wrapper.parentElement, { attributes: true, attributeFilter: ['class'] });
     return () => observer.disconnect();
   }, [isDark]);
 
@@ -188,12 +176,9 @@ export default function Home() {
     localStorage.setItem(THEME_KEY, newTheme);
   };
 
-  // Hủy đỉnh đang chọn dở / reset game path nếu đổi công cụ (ví dụ từ Nối Cạnh sang Xóa)
   useEffect(() => {
     setPendingEdgeSource(null);
-    if (mode !== 'play') {
-      setGamePath([]);
-    }
+    if (mode !== 'play') setGamePath([]);
   }, [mode]);
 
   const pushHistory = (skipCustom = false) => {
@@ -204,22 +189,18 @@ export default function Home() {
       nextNodeId,
       nextEdgeId
     }]);
-    if (!skipCustom) {
-      setCurrentLevel('custom');
-    }
+    if (!skipCustom) setCurrentLevel('custom');
   };
 
   const handleUndo = () => {
     setPast(prevPast => {
       if (prevPast.length === 0) return prevPast;
       const previousState = prevPast[prevPast.length - 1];
-
       setNodes(previousState.nodes);
       setEdges(previousState.edges);
       setStartNode(previousState.startNode);
       setNextNodeId(previousState.nextNodeId);
       setNextEdgeId(previousState.nextEdgeId);
-
       setCurrentLevel('custom');
       return prevPast.slice(0, -1);
     });
@@ -228,8 +209,7 @@ export default function Home() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-        e.preventDefault();
-        handleUndo();
+        e.preventDefault(); handleUndo();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -256,69 +236,53 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (nodes.length > 0 || currentLevel === 'custom') {
+    if (nodes.length > 0 || currentLevel === 'custom' || currentLevel === 'random') {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges, startNode, currentLevel }));
     }
   }, [nodes, edges, startNode, currentLevel]);
 
   useEffect(() => {
     if (interaction.type !== 'resizingLog' && interaction.type !== 'resizingLeft' && interaction.type !== 'resizingRight') return;
-
     const handlePointerMove = (e) => {
       if (interaction.type === 'resizingLog') {
         const newHeight = window.innerHeight - e.clientY;
         setLogHeight(Math.max(60, Math.min(newHeight, window.innerHeight * 0.8)));
       } else if (window.innerWidth >= 768) {
-        // Chỉ cho phép resize 2 Sidebar 2 bên trên Desktop
         if (interaction.type === 'resizingLeft') {
           const newWidth = Math.max(64, Math.min(e.clientX, window.innerWidth * 0.4));
-          setLeftPanelWidth(newWidth);
-          setIsSidebarExpanded(newWidth > 100);
+          setLeftPanelWidth(newWidth); setIsSidebarExpanded(newWidth > 100);
         } else if (interaction.type === 'resizingRight') {
           const newWidth = window.innerWidth - e.clientX;
           setRightPanelWidth(Math.max(200, Math.min(newWidth, window.innerWidth * 0.5)));
         }
       }
     };
-
     const handlePointerUp = () => setInteraction({ type: 'none' });
-
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
-
-    return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-    };
+    return () => { window.removeEventListener('pointermove', handlePointerMove); window.removeEventListener('pointerup', handlePointerUp); };
   }, [interaction.type]);
 
-  // Kiểm tra thắng game (đi qua mọi đỉnh) & Lưu kết quả tự động
   useEffect(() => {
     if (mode === 'play' && nodes.length > 0 && gamePath.length === nodes.length) {
       const pathString = gamePath.join(',');
       const alreadyFound = foundPaths.some(p => p.path.join(',') === pathString);
-      
       if (!alreadyFound) {
         const startLabel = nodes.find(n => n.id === gamePath[0])?.label || gamePath[0];
         setFoundPaths(curr => [...curr, { path: [...gamePath], startNodeLabel: startLabel }]);
-        setShowResultsHistory(true); // Mở sẵn bảng kết quả để xem
+        setShowResultsHistory(true); 
         showToast('🎉 CHÚC MỪNG BẠN ĐÃ TÌM ĐƯỢC ĐƯỜNG ĐI! 🎉\nKết quả đã được tự động lưu lại.');
       }
     }
   }, [gamePath, mode, nodes, foundPaths]);
 
   const toggleSidebar = () => {
-    if (isSidebarExpanded) {
-      setLeftPanelWidth(80);
-      setIsSidebarExpanded(false);
-    } else {
-      setLeftPanelWidth(250);
-      setIsSidebarExpanded(true);
-    }
+    if (isSidebarExpanded) { setLeftPanelWidth(80); setIsSidebarExpanded(false); }
+    else { setLeftPanelWidth(250); setIsSidebarExpanded(true); }
   };
 
   const loadLevel = (lvl, index) => {
-    pushHistory(true); // pass true to skip marking as custom
+    pushHistory(true); 
     setNodes(lvl.nodes);
     setEdges(lvl.edges);
     setStartNode(null);
@@ -330,15 +294,113 @@ export default function Home() {
   };
 
   const resetCurrentMap = () => {
-    if (currentLevel === 'custom') {
+    if (currentLevel === 'custom' || currentLevel === 'random') {
       pushHistory();
       setNodes([]); setEdges([]); setStartNode(null);
+      setNextNodeId(1);
+      setNextEdgeId(1);
       resetVisualizer();
-      showToast("Đã xóa trắng bản đồ tùy chỉnh!");
+      showToast("Đã xóa trắng bản đồ!");
     } else {
       loadLevel(MAP_LEVELS[currentLevel], currentLevel);
       showToast(`Đã reset màn chơi: ${MAP_LEVELS[currentLevel].name}`);
     }
+  };
+
+  // --- LOGIC TẠO BẢN ĐỒ NGẪU NHIÊN ---
+  const handleMinNodesChange = (val) => {
+    let newVal = Math.max(3, Math.min(val, 29));
+    setRandMinNodes(newVal);
+    if (newVal >= randMaxNodes) {
+      setRandMaxNodes(newVal + 1);
+    }
+  };
+
+  const handleMaxNodesChange = (val) => {
+    let newVal = Math.max(randMinNodes + 1, Math.min(val, 30));
+    setRandMaxNodes(newVal);
+  };
+
+  const generateRandomMap = () => {
+    const N = Math.floor(Math.random() * (randMaxNodes - randMinNodes + 1)) + randMinNodes;
+    const newNodes = [];
+    const centerX = 300;
+    const centerY = 300;
+    const radius = 150 + (N * 5); // Tự động nới rộng hình tròn nếu đỉnh nhiều hơn
+
+    // Tạo N đỉnh xếp vòng tròn
+    for (let i = 0; i < N; i++) {
+      const angle = (i / N) * 2 * Math.PI;
+      const jitterX = (Math.random() - 0.5) * 40; // Gây rối tọa độ một chút
+      const jitterY = (Math.random() - 0.5) * 40;
+      newNodes.push({
+        id: `n${i + 1}`,
+        x: centerX + radius * Math.cos(angle) + jitterX,
+        y: centerY + radius * Math.sin(angle) + jitterY,
+        label: `${i + 1}`
+      });
+    }
+
+    const newEdges = [];
+    let edgeIdCounter = 1;
+
+    // 1. TẠO CÂY KHUNG (Spanning Tree) ĐỂ ĐẢM BẢO LIÊN THÔNG TẤT CẢ CÁC ĐỈNH
+    const connected = [newNodes[0].id];
+    const unconnected = newNodes.slice(1).map(n => n.id);
+
+    while (unconnected.length > 0) {
+      const uIndex = Math.floor(Math.random() * unconnected.length);
+      const cIndex = Math.floor(Math.random() * connected.length);
+      const uNode = unconnected[uIndex];
+      const cNode = connected[cIndex];
+
+      newEdges.push({ id: `e${edgeIdCounter++}`, source: cNode, target: uNode });
+      
+      connected.push(uNode);
+      unconnected.splice(uIndex, 1);
+    }
+
+    // 2. SINH THÊM CÁC CẠNH NGẪU NHIÊN THEO %
+    const maxPossibleEdges = (N * (N - 1)) / 2;
+    const remainingPossibleEdges = maxPossibleEdges - newEdges.length;
+    let edgesToAdd = Math.floor(remainingPossibleEdges * (randEdgePercent / 100));
+
+    const possibleEdges = [];
+    for (let i = 0; i < N; i++) {
+      for (let j = i + 1; j < N; j++) {
+        const u = newNodes[i].id;
+        const v = newNodes[j].id;
+        const exists = newEdges.some(e => (e.source === u && e.target === v) || (e.source === v && e.target === u));
+        if (!exists) {
+          possibleEdges.push({ u, v });
+        }
+      }
+    }
+
+    for (let i = possibleEdges.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [possibleEdges[i], possibleEdges[j]] = [possibleEdges[j], possibleEdges[i]];
+    }
+
+    for (let i = 0; i < edgesToAdd && i < possibleEdges.length; i++) {
+      newEdges.push({
+        id: `e${edgeIdCounter++}`,
+        source: possibleEdges[i].u,
+        target: possibleEdges[i].v
+      });
+    }
+
+    pushHistory(true);
+    setNodes(newNodes);
+    setEdges(newEdges);
+    setStartNode(null);
+    resetVisualizer();
+    setNextNodeId(N + 1);
+    setNextEdgeId(edgeIdCounter);
+    setCurrentLevel('random');
+    setShowRandomModal(false);
+    if (window.innerWidth < 768) setShowMobileLeft(false);
+    showToast(`Đã tạo map Random: ${N} đỉnh, ${newEdges.length} cạnh.`);
   };
 
   const getSvgCoords = (e) => {
@@ -352,7 +414,6 @@ export default function Home() {
     };
   };
 
-  // Helper hàm tạo cạnh để dùng cho cả Touch và Mouse
   const createEdgeBetween = (sourceId, targetId) => {
     if (sourceId === targetId) return;
     const exists = edges.some(edge => (edge.source === sourceId && edge.target === targetId) || (edge.target === sourceId && edge.source === targetId));
@@ -363,19 +424,16 @@ export default function Home() {
     }
   };
 
-  // Helper cho việc Kéo Liền Mạch trong lúc chơi Game (Seamless drag)
   const handleGamePathMove = (targetId) => {
     setGamePath(prevPath => {
       if (prevPath.length === 0) return [targetId];
       const lastNode = prevPath[prevPath.length - 1];
-      if (lastNode === targetId) return prevPath; // Đang lướt trên cùng 1 đỉnh
+      if (lastNode === targetId) return prevPath; 
 
-      // Lùi lại (Undo) nếu rê trúng đỉnh ngay trước đó
       if (prevPath.length > 1 && prevPath[prevPath.length - 2] === targetId) {
         return prevPath.slice(0, -1);
       }
 
-      // Tới trước (Tiến) nếu đỉnh này kề với đỉnh cuối và chưa đi qua
       if (!prevPath.includes(targetId)) {
         const edgeExists = edges.some(edge => 
           (edge.source === lastNode && edge.target === targetId) || 
@@ -391,20 +449,18 @@ export default function Home() {
 
   const onSvgPointerDown = (e) => {
     setIsClick(true);
-    // LUÔN CHO PHÉP kéo không gian (Pan) nếu chạm vào vùng trống (background)
-    // Giúp thân thiện cho thao tác vuốt trên điện thoại
     const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
     const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
     setInteraction({ type: 'panning', startX: clientX - transform.x, startY: clientY - transform.y });
   };
 
   const onNodePointerDown = (e, nodeId) => {
-    e.stopPropagation(); // Nếu chạm vào đỉnh, ngừng sự kiện để không Pan màn hình
+    e.stopPropagation(); 
     setIsClick(true);
     const isAlgorithmActive = isPlaying || currentStepIndex >= 0 || viewingStaticPath;
 
     if (isAlgorithmActive) {
-      setInteraction({ type: 'none' }); // Vô hiệu hóa kéo đỉnh
+      setInteraction({ type: 'none' }); 
       return;
     }
 
@@ -412,11 +468,8 @@ export default function Home() {
       setInteraction({ type: 'drawingEdge', sourceId: nodeId });
       setMouseCoords(getSvgCoords(e));
     } else if (mode === 'remove' || mode === 'setStart') {
-      // Do nothing on down
     } else if (mode === 'play') {
       setInteraction({ type: 'playingGamePath' });
-      
-      // Xử lý khởi tạo / nối điểm / bấm rời rạc
       if (gamePath.length === 0) {
         setGamePath([nodeId]);
         didStartNewPath.current = true;
@@ -425,7 +478,6 @@ export default function Home() {
         if (lastNode === nodeId) {
           didStartNewPath.current = false;
         } else if (!gamePath.includes(nodeId)) {
-          // Bấm trúng đỉnh mới kề -> Nối liền
           const edgeExists = edges.some(edge => 
             (edge.source === lastNode && edge.target === nodeId) || 
             (edge.target === lastNode && edge.source === nodeId)
@@ -434,12 +486,10 @@ export default function Home() {
             setGamePath([...gamePath, nodeId]);
             didStartNewPath.current = true;
           } else {
-            // Không kề -> Chuyển gốc bắt đầu sang đây
             setGamePath([nodeId]);
             didStartNewPath.current = true;
           }
         } else {
-          // Bấm trúng đỉnh đã đi qua -> Reset từ đây
           setGamePath([nodeId]);
           didStartNewPath.current = true;
         }
@@ -454,7 +504,6 @@ export default function Home() {
     e.stopPropagation();
     const isAlgorithmActive = isPlaying || currentStepIndex >= 0 || viewingStaticPath;
     if (isAlgorithmActive || mode === 'play') return;
-
     if (mode === 'remove') {
       pushHistory();
       setEdges(edges.filter(edge => edge.id !== edgeId));
@@ -462,14 +511,12 @@ export default function Home() {
   };
 
   const onPointerMove = (e) => {
-    if (isPinching.current) return; // Không thực hiện kéo không gian nếu đang Zoom 2 ngón tay
-
+    if (isPinching.current) return;
     setIsClick(false);
     const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
     const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
 
     if (interaction.type === 'playingGamePath') {
-      // Kiểm tra xem tọa độ con trỏ đang nằm trên đỉnh nào (Seamless Dragging)
       const elem = document.elementFromPoint(clientX, clientY);
       const targetNode = elem?.closest('[data-nodeid]');
       if (targetNode) {
@@ -488,20 +535,15 @@ export default function Home() {
 
   const onSvgPointerUp = (e) => {
     const isAlgorithmActive = isPlaying || currentStepIndex >= 0 || viewingStaticPath;
-
-    // Thêm Node nếu chạm không gian ở chế độ addNode
     if (isClick && mode === 'addNode' && !isAlgorithmActive) {
       pushHistory();
       const coords = getSvgCoords(e);
       setNodes([...nodes, { id: `n${nextNodeId}`, x: coords.x, y: coords.y, label: `${nextNodeId}` }]);
       setNextNodeId(prev => prev + 1);
     }
-
-    // Hủy trạng thái nối đỉnh nếu bấm ra ngoài không gian
     if (interaction.type === 'drawingEdge') {
       setPendingEdgeSource(null);
     }
-
     if (interaction.type !== 'resizingLog') {
       setInteraction({ type: 'none' });
     }
@@ -510,16 +552,11 @@ export default function Home() {
   const onNodePointerUp = (e, nodeId) => {
     e.stopPropagation();
     const isAlgorithmActive = isPlaying || currentStepIndex >= 0 || viewingStaticPath;
-
-    if (isAlgorithmActive) {
-      setInteraction({ type: 'none' });
-      return;
-    }
+    if (isAlgorithmActive) { setInteraction({ type: 'none' }); return; }
 
     if (mode === 'play') {
       if (isClick && gamePath.length > 0) {
         const lastNode = gamePath[gamePath.length - 1];
-        // Nếu vừa chạm nhẹ (click) lại vào đỉnh cuối cùng đã đi qua -> Undo (lùi lại 1 bước)
         if (lastNode === nodeId && !didStartNewPath.current) {
           setGamePath(gamePath.slice(0, -1));
         }
@@ -530,11 +567,9 @@ export default function Home() {
 
     if (mode === 'addEdge') {
       if (!isClick && interaction.type === 'drawingEdge') {
-        // [CÁCH 1]: Nhả tay sau khi kéo thả (Hỗ trợ tốt cảm ứng Touch trên mobile)
         const clientX = e.clientX ?? (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : 0);
         const clientY = e.clientY ?? (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : 0);
         if (clientX && clientY) {
-          // Lấy element ở vị trí nhả tay
           const elem = document.elementFromPoint(clientX, clientY);
           const targetNode = elem?.closest('[data-nodeid]');
           if (targetNode) {
@@ -545,16 +580,14 @@ export default function Home() {
           }
         }
         setPendingEdgeSource(null);
-
       } else if (isClick) {
-        // [CÁCH 2]: Chạm lần lượt 2 đỉnh để nối (Tap to Connect)
         if (pendingEdgeSource && pendingEdgeSource !== nodeId) {
           createEdgeBetween(pendingEdgeSource, nodeId);
-          setPendingEdgeSource(null); // Đã nối xong, hủy trạng thái
+          setPendingEdgeSource(null); 
         } else if (pendingEdgeSource === nodeId) {
-          setPendingEdgeSource(null); // Chạm lại chính nó thì hủy chọn
+          setPendingEdgeSource(null); 
         } else {
-          setPendingEdgeSource(nodeId); // Chạm lần đầu, đánh dấu đỉnh này để chờ nối
+          setPendingEdgeSource(nodeId); 
         }
       }
     } else if (isClick) {
@@ -591,7 +624,6 @@ export default function Home() {
     });
   };
 
-  // --- HỖ TRỢ ZOOM 2 NGÓN TAY VÀ VUỐT (MOBILE MULTI-TOUCH) ---
   const handleTouchStart = (e) => {
     if (e.touches.length >= 2) {
       isPinching.current = true;
@@ -610,7 +642,6 @@ export default function Home() {
       if (pinchDistanceRef.current) {
         const delta = dist / pinchDistanceRef.current;
         let newScale = Math.min(Math.max(transform.scale * delta, 0.3), 3);
-
         const clientX = (touch1.clientX + touch2.clientX) / 2;
         const clientY = (touch1.clientY + touch2.clientY) / 2;
 
@@ -628,7 +659,6 @@ export default function Home() {
       }
       pinchDistanceRef.current = dist;
     } else if (e.touches.length === 1 && interaction.type === 'playingGamePath') {
-      // Hỗ trợ Seamless Drag trên màn hình cảm ứng
       const clientX = e.touches[0].clientX;
       const clientY = e.touches[0].clientY;
       const elem = document.elementFromPoint(clientX, clientY);
@@ -653,7 +683,7 @@ export default function Home() {
     setIsPlaying(false);
     setViewingStaticPath(null);
     setFoundPaths([]);
-    setGamePath([]); // Reset game path khi reset
+    setGamePath([]); 
   };
 
   const getEffectiveStartNodes = () => {
@@ -665,22 +695,16 @@ export default function Home() {
   };
 
   const runFastGlobalSearch = () => {
-    const startNodesToRun = searchAllNodes ? nodes.map(n => n.id) : getEffectiveStartNodes();
-    if (startNodesToRun.length === 0) {
-      showToast("Không tìm thấy đỉnh hợp lệ để bắt đầu!");
-      return;
-    }
+    const startNodesToRun = getEffectiveStartNodes();
+    if (startNodesToRun.length === 0) { showToast("Không tìm thấy đỉnh hợp lệ để bắt đầu!"); return; }
 
-    // --- CHECK ISOLATED NODES ---
     if (nodes.length > 1) {
       const hasIsolatedNode = nodes.some(node =>
         !edges.some(edge => edge.source === node.id || edge.target === node.id)
       );
       if (hasIsolatedNode) {
         showToast("Bản đồ có đỉnh bị cô lập, KHÔNG THỂ có đường đi Hamilton!");
-        setFastResults([]);
-        setShowFastResultsModal(true);
-        setSteps([]); setCurrentStepIndex(-1); setIsPlaying(false); setViewingStaticPath(null);
+        setFastResults([]); setShowFastResultsModal(true); setSteps([]); setCurrentStepIndex(-1); setIsPlaying(false); setViewingStaticPath(null);
         return;
       }
     }
@@ -711,32 +735,25 @@ export default function Home() {
 
   const generateSteps = () => {
     const startNodesToRun = getEffectiveStartNodes();
-    if (startNodesToRun.length === 0) {
-      showToast("Chưa có đỉnh nào trên bản đồ!");
-      return;
-    }
+    if (startNodesToRun.length === 0) { showToast("Chưa có đỉnh nào trên bản đồ!"); return; }
 
-    // --- CHECK ISOLATED NODES ---
     if (nodes.length > 1) {
       const hasIsolatedNode = nodes.some(node =>
         !edges.some(edge => edge.source === node.id || edge.target === node.id)
       );
       if (hasIsolatedNode) {
         showToast("Bản đồ có đỉnh cô lập, KHÔNG THỂ có đường đi Hamilton!");
-        setViewingStaticPath(null);
-        setFoundPaths([]);
+        setViewingStaticPath(null); setFoundPaths([]);
         setSteps([
           { type: 'start', path: [], current: null, action: `Khởi tạo thuật toán Backtracking...` },
           { type: 'fail', path: [], action: 'DỪNG SỚM: Phát hiện ít nhất 1 đỉnh bị cô lập (không có cạnh nối).' }
         ]);
-        setCurrentStepIndex(1);
-        setIsPlaying(false);
+        setCurrentStepIndex(1); setIsPlaying(false);
         return;
       }
     }
 
-    setViewingStaticPath(null);
-    setFoundPaths([]);
+    setViewingStaticPath(null); setFoundPaths([]);
     const adj = {};
     nodes.forEach(n => adj[n.id] = []);
     edges.forEach(e => { adj[e.source].push(e.target); adj[e.target].push(e.source); });
@@ -786,10 +803,7 @@ export default function Home() {
     if (foundCount === 0) generatedSteps.push({ type: 'fail', path: [], action: 'Đã vét cạn nhưng không có đường đi Hamilton nào.' });
     else generatedSteps.push({ type: 'finish', path: [], action: `Hoàn tất toàn bộ tiến trình! Tổng cộng: ${foundCount} đường đi.` });
 
-    setSteps(generatedSteps);
-    setCurrentStepIndex(0);
-    setIsPlaying(true);
-
+    setSteps(generatedSteps); setCurrentStepIndex(0); setIsPlaying(true);
     if (window.innerWidth < 768) setShowMobileRight(false);
   };
 
@@ -820,22 +834,14 @@ export default function Home() {
 
   const handleSkipToNextResult = () => {
     if (currentStepIndex < 0 || steps.length === 0) return;
-    
     setIsPlaying(false);
     let nextSuccessIdx = -1;
-    
-    // Tìm index của kết quả success tiếp theo trong mảng steps
     for (let i = currentStepIndex + 1; i < steps.length; i++) {
-      if (steps[i].type === 'success') {
-        nextSuccessIdx = i;
-        break;
-      }
+      if (steps[i].type === 'success') { nextSuccessIdx = i; break; }
     }
 
     if (nextSuccessIdx !== -1) {
       setCurrentStepIndex(nextSuccessIdx);
-      
-      // Thu thập tất cả các path success từ đầu đến vị trí này để hiển thị chính xác số thứ tự
       const newPaths = [];
       let successCount = 0;
       for (let i = 0; i <= nextSuccessIdx; i++) {
@@ -844,49 +850,31 @@ export default function Home() {
           newPaths.push({ path: steps[i].path, startNodeLabel: steps[i].startNodeLabel });
         }
       }
-
       setFoundPaths(curr => {
         const updated = [...curr];
-        newPaths.forEach(np => {
-          if (!updated.some(p => p.path.join() === np.path.join())) {
-            updated.push(np);
-          }
-        });
+        newPaths.forEach(np => { if (!updated.some(p => p.path.join() === np.path.join())) updated.push(np); });
         return updated;
       });
-
       setViewingStaticPath(steps[nextSuccessIdx].path);
       showToast(`Đã tua nhanh đến kết quả #${successCount}`);
     } else {
-      // Nếu không còn success nào phía sau, nhảy thẳng đến hết mảng
       setCurrentStepIndex(steps.length - 1);
-      
       const newPaths = [];
       steps.forEach(step => {
-        if (step.type === 'success') {
-          newPaths.push({ path: step.path, startNodeLabel: step.startNodeLabel });
-        }
+        if (step.type === 'success') newPaths.push({ path: step.path, startNodeLabel: step.startNodeLabel });
       });
-
       setFoundPaths(curr => {
         const updated = [...curr];
-        newPaths.forEach(np => {
-          if (!updated.some(p => p.path.join() === np.path.join())) {
-            updated.push(np);
-          }
-        });
+        newPaths.forEach(np => { if (!updated.some(p => p.path.join() === np.path.join())) updated.push(np); });
         return updated;
       });
-
       showToast("Đã là kết quả cuối cùng");
     }
   };
 
   const handleNextPath = () => {
     if (currentStepIndex < steps.length - 1) {
-      setViewingStaticPath(null);
-      setCurrentStepIndex(prev => prev + 1);
-      setIsPlaying(true);
+      setViewingStaticPath(null); setCurrentStepIndex(prev => prev + 1); setIsPlaying(true);
     }
   };
 
@@ -902,11 +890,9 @@ export default function Home() {
   let backtrackedNode = null;
 
   if (mode === 'play') {
-    activePath = gamePath;
-    currentActiveNode = gamePath[gamePath.length - 1];
+    activePath = gamePath; currentActiveNode = gamePath[gamePath.length - 1];
   } else if (viewingStaticPath) {
-    activePath = viewingStaticPath;
-    currentActiveNode = viewingStaticPath[viewingStaticPath.length - 1];
+    activePath = viewingStaticPath; currentActiveNode = viewingStaticPath[viewingStaticPath.length - 1];
   } else if (currentStepIndex >= 0) {
     const currentStep = steps[currentStepIndex];
     activePath = currentStep?.path || [];
@@ -920,34 +906,28 @@ export default function Home() {
   const isCurrentStepSuccess = steps[currentStepIndex]?.type === 'success';
   const isPlayMode = mode === 'play';
 
-  // --- Theme Variables cho SVG ---
   const nodeDefaultFill = isDark ? "#1e293b" : "#ffffff";
   const nodeDefaultStroke = isDark ? "#475569" : "#cbd5e1";
   const textDefaultFill = isDark ? "#f8fafc" : "#0f172a";
   const edgeDefaultStroke = isDark ? "#334155" : "#94a3b8";
   const drawingEdgeStroke = isDark ? "#64748b" : "#94a3b8";
   const startNodeStroke = isDark ? "#6366f1" : "#4f46e5";
-
-  // Grid background
   const gridLineColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
 
   return (
     <div id="hamilton-app-wrapper" className={`${theme} flex flex-col h-dvh w-full overflow-hidden font-sans selection:bg-indigo-500/30 touch-none`}>
       <div className="flex flex-col h-full w-full bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 transition-colors duration-300">
 
-        {/* CUSTOM TOAST NOTIFICATION */}
         {toastMessage && (
-          <div className="fixed top-20 left-1/2 -translate-x-1/2 z-100 px-6 py-3 bg-indigo-600/95 backdrop-blur-sm text-white rounded-xl shadow-2xl font-bold text-sm text-center animate-[slideDownToast_0.3s_ease-out] border border-indigo-400/30 max-w-[90vw]">
+          <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 bg-indigo-600/95 backdrop-blur-sm text-white rounded-xl shadow-2xl font-bold text-sm text-center animate-[slideDownToast_0.3s_ease-out] border border-indigo-400/30 max-w-[90vw]">
             {toastMessage}
           </div>
         )}
 
-        {/* HEADER */}
         <header className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 p-3 md:p-4 flex justify-between items-center shadow-sm dark:shadow-lg z-30 shrink-0 h-14 md:h-16 transition-colors duration-300">
           <button onClick={() => setShowMobileLeft(true)} className="md:hidden p-2 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700">
             <Menu size={20} />
           </button>
-
           <div className="flex items-center gap-2 md:gap-3 flex-1 justify-center md:justify-start">
             <div className="w-8 h-8 md:w-9 md:h-9 bg-linear-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-md dark:shadow-[0_0_10px_rgba(99,102,241,0.5)]">
               <Cpu size={20} className="text-white" />
@@ -956,7 +936,6 @@ export default function Home() {
               Hamilton Simulator
             </h1>
           </div>
-
           <div className="flex items-center gap-2">
             <button onClick={toggleTheme} className="p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition" title="Đổi giao diện Sáng/Tối">
               {isDark ? <Sun size={20} /> : <Moon size={20} />}
@@ -968,23 +947,22 @@ export default function Home() {
         </header>
 
         <div className="flex flex-1 overflow-hidden relative">
-
-          {/* OVERLAYS CHO MOBILE */}
           {showMobileLeft && <div className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-sm" onClick={() => setShowMobileLeft(false)} />}
           {showMobileRight && <div className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-sm" onClick={() => setShowMobileRight(false)} />}
 
-          {/* === SIDEBAR TRÁI: XÂY MAP & CHỌN MÀN === */}
+          {/* PLACEHOLDER GIỮ CHỖ CỐ ĐỊNH 80PX CHO SIDEBAR (ĐỂ CANVAS KHÔNG BỊ ĐẨY LÙI KHI MỞ RỘNG SIDEBAR) */}
+          <div className="hidden md:block shrink-0 pointer-events-none" style={{ width: '80px' }}></div>
+
           <div
             style={{ width: window.innerWidth >= 768 ? leftPanelWidth : '260px' }}
             className={`
-              fixed left-0 top-14 md:top-0 bottom-0 md:inset-y-0 z-50 md:static md:z-10 shrink-0 
-              bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 
-              transform transition-transform duration-300 ease-in-out select-none
+              fixed left-0 top-14 md:top-0 bottom-0 md:inset-y-0 z-50 md:absolute md:z-30 shrink-0 
+              bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-r border-slate-200 dark:border-slate-800 
+              transform transition-all duration-300 ease-in-out select-none md:shadow-[4px_0_24px_rgba(0,0,0,0.05)] dark:md:shadow-[4px_0_24px_rgba(0,0,0,0.3)]
               ${showMobileLeft ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
             `}
           >
             <div className="w-full h-full p-3 md:p-2 flex flex-col gap-2 overflow-y-auto overflow-x-hidden pt-0 md:pt-2">
-
               <button onClick={() => setShowMobileLeft(false)} className="md:hidden absolute top-4 right-4 p-2 text-slate-500 hover:text-red-500 rounded-full bg-slate-100 dark:bg-slate-800 z-50">
                 <X size={18} />
               </button>
@@ -998,9 +976,7 @@ export default function Home() {
 
               <div className="md:hidden text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 px-1 pt-4">Công cụ bản đồ</div>
 
-              {/* NÚT PLAY MODE */}
               <ToolBtn isExpanded={window.innerWidth < 768 || isSidebarExpanded} icon={<Gamepad2 />} label="Tự chơi (Giải đố)" mode="play" current={mode} setMode={setMode} locked={currentStepIndex >= 0 || viewingStaticPath} activeClasses="text-fuchsia-600 dark:text-fuchsia-400 bg-fuchsia-100 dark:bg-fuchsia-500/10 border-fuchsia-400 dark:border-fuchsia-500/50" />
-
               <ToolBtn isExpanded={window.innerWidth < 768 || isSidebarExpanded} icon={<MousePointer2 />} label="Chọn / Kéo thả" mode="select" current={mode} setMode={setMode} locked={false} />
               <ToolBtn isExpanded={window.innerWidth < 768 || isSidebarExpanded} icon={<PlusCircle />} label="Thêm đỉnh" mode="addNode" current={mode} setMode={setMode} locked={currentStepIndex >= 0 || viewingStaticPath} />
               <ToolBtn isExpanded={window.innerWidth < 768 || isSidebarExpanded} icon={<GitMerge />} label="Nối cạnh" mode="addEdge" current={mode} setMode={setMode} locked={currentStepIndex >= 0 || viewingStaticPath} />
@@ -1019,7 +995,7 @@ export default function Home() {
                 <button
                   onClick={() => { setCurrentLevel('custom'); setMode('select'); if(window.innerWidth < 768) setShowMobileLeft(false); }}
                   title="Màn chơi tùy chỉnh của riêng bạn"
-                  className={`${(window.innerWidth < 768 || isSidebarExpanded) ? 'col-span-5 py-2' : 'col-span-1 aspect-square'} flex items-center justify-center rounded border font-black text-[12px] transition-all uppercase tracking-wider ${currentLevel === 'custom' ? 'bg-amber-500 text-white border-amber-400 shadow-md dark:shadow-[0_0_10px_rgba(245,158,11,0.5)]' : 'bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
+                  className={`${(window.innerWidth < 768 || isSidebarExpanded) || currentLevel === 'custom' ? '' : 'hidden'} ${(window.innerWidth < 768 || isSidebarExpanded) ? 'col-span-5 py-2' : 'col-span-1 aspect-square'} flex items-center justify-center rounded border font-black text-[12px] transition-all uppercase tracking-wider ${currentLevel === 'custom' ? 'bg-amber-500 text-white border-amber-400 shadow-md dark:shadow-[0_0_10px_rgba(245,158,11,0.5)]' : 'bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
                 >
                   {(window.innerWidth < 768 || isSidebarExpanded) ? 'Màn Tùy chỉnh' : 'Cus'}
                 </button>
@@ -1029,42 +1005,36 @@ export default function Home() {
                       key={lvl.id}
                       onClick={() => { loadLevel(lvl, index); }}
                       title={lvl.name}
-                      className={`${(window.innerWidth < 768 || isSidebarExpanded) ? '' : 'hidden'} flex items-center justify-center aspect-square rounded border font-black text-sm transition-all ${currentLevel === index ? 'bg-indigo-500 text-white border-indigo-400 shadow-md dark:shadow-[0_0_10px_rgba(99,102,241,0.5)]' : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
+                      className={`${(window.innerWidth < 768 || isSidebarExpanded) || currentLevel === index ? '' : 'hidden'} flex items-center justify-center aspect-square rounded border font-black text-sm transition-all ${currentLevel === index ? 'bg-indigo-500 text-white border-indigo-400 shadow-md dark:shadow-[0_0_10px_rgba(99,102,241,0.5)]' : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
                     >
                       {index + 1}
                     </button>
                   )
                 })}
+                {/* NÚT RANDOM MAP (RAN) */}
+                <button
+                  onClick={() => setShowRandomModal(true)}
+                  title="Tạo màn chơi ngẫu nhiên"
+                  className={`${(window.innerWidth < 768 || isSidebarExpanded) || currentLevel === 'random' ? '' : 'hidden'} flex items-center justify-center aspect-square rounded border font-black text-[12px] transition-all ${currentLevel === 'random' ? 'bg-emerald-500 text-white border-emerald-400 shadow-md dark:shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-emerald-100 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-700 hover:bg-emerald-200 dark:hover:bg-emerald-800/60 text-emerald-700 dark:text-emerald-400 hover:text-emerald-900 dark:hover:text-emerald-200'}`}
+                >
+                  RAN
+                </button>
               </div>
 
-              {/* Các nút Zoom xếp dọc (Desktop) hoặc ngang (Mobile) */}
               <div className={`mt-auto flex ${window.innerWidth < 768 || isSidebarExpanded ? 'flex-row gap-5' : 'flex-col gap-4 mb-5'} justify-center p-1 bg-slate-100 dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800 shrink-0 md:mx-auto `}>
-                <button onClick={() => handleZoom(1.2)} className="p-2 md:p-2 flex-1 md:flex-none bg-white dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-300 shadow-sm transition flex justify-center"><ZoomIn size={24} /></button>
-                <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="p-2 md:p-2 flex-1 md:flex-none bg-white dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-300 shadow-sm transition flex justify-center"><Maximize size={24} /></button>
-                <button onClick={() => handleZoom(0.8)} className="p-2 md:p-2 flex-1 md:flex-none bg-white dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-300 shadow-sm transition flex justify-center"><ZoomOut size={24} /></button>
+                <button onClick={() => handleZoom(1.2)} className="p-2 flex-1 md:flex-none bg-white dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-300 shadow-sm transition flex justify-center"><ZoomIn size={24} /></button>
+                <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="p-2 flex-1 md:flex-none bg-white dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-300 shadow-sm transition flex justify-center"><Maximize size={24} /></button>
+                <button onClick={() => handleZoom(0.8)} className="p-2 flex-1 md:flex-none bg-white dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-300 shadow-sm transition flex justify-center"><ZoomOut size={24} /></button>
               </div>
             </div>
-
-            {/* <div
-              onPointerDown={(e) => { e.preventDefault(); setInteraction({ type: 'resizingLeft' }); }}
-              className="hidden md:flex absolute top-0 -right-2 w-4 h-full cursor-col-resize z-30 hover:bg-blue-500/20 transition-colors justify-center items-center group"
-            >
-              <div className="w-1 h-12 bg-slate-300 dark:bg-slate-600 opacity-0 group-hover:opacity-100 rounded-full transition-opacity"></div>
-            </div> */}
           </div>
 
-          {/* === KHU VỰC VẼ CANVAS CHÍNH === */}
           <div
             className="flex-1 relative overflow-hidden bg-slate-100 dark:bg-slate-950/80 shadow-inner flex flex-col"
-            onPointerMove={onPointerMove}
-            onPointerUp={onSvgPointerUp}
-            onPointerLeave={onSvgPointerUp}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-            style={{ touchAction: 'none' }} // Ngăn chặn native scroll trên mobile khi vuốt canvas
+            onPointerMove={onPointerMove} onPointerUp={onSvgPointerUp} onPointerLeave={onSvgPointerUp}
+            onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}
+            style={{ touchAction: 'none' }} 
           >
-            {/* Lưới nền Game */}
             <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: `linear-gradient(${gridLineColor} 1px, transparent 1px), linear-gradient(90deg, ${gridLineColor} 1px, transparent 1px)`, backgroundSize: `${40 * transform.scale}px ${40 * transform.scale}px`, backgroundPosition: `${transform.x}px ${transform.y}px` }}></div>
 
             {mode === 'play' && (
@@ -1073,15 +1043,9 @@ export default function Home() {
               </div>
             )}
 
-            <svg
-              ref={svgRef}
-              className={`w-full flex-1 ${mode === 'addNode' ? 'cursor-crosshair' : (interaction.type === 'panning' ? 'cursor-grabbing' : 'cursor-grab')}`}
-              onWheel={handleWheel}
-              onPointerDown={onSvgPointerDown}
-            >
+            <svg ref={svgRef} className={`w-full flex-1 ${mode === 'addNode' ? 'cursor-crosshair' : (interaction.type === 'panning' ? 'cursor-grabbing' : 'cursor-grab')}`} onWheel={handleWheel} onPointerDown={onSvgPointerDown}>
               <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
 
-                {/* TIA KÉO ĐƯỜNG ĐI (Chế độ Nối Cạnh) */}
                 {(interaction.type === 'drawingEdge') && (
                   <line
                     x1={nodes.find(n => n.id === interaction.sourceId)?.x} y1={nodes.find(n => n.id === interaction.sourceId)?.y}
@@ -1090,7 +1054,6 @@ export default function Home() {
                   />
                 )}
 
-                {/* Vẽ Cạnh */}
                 {edges.map(edge => {
                   const source = nodes.find(n => n.id === edge.source);
                   const target = nodes.find(n => n.id === edge.target);
@@ -1106,11 +1069,10 @@ export default function Home() {
                   }
 
                   const isCheckingEdge = checkingEdge && ((checkingEdge.u === source.id && checkingEdge.v === target.id) || (checkingEdge.v === source.id && checkingEdge.u === target.id));
-
                   let stroke = edgeDefaultStroke, strokeWidth = 3, strokeDash = "none", classes = "transition-all duration-300";
 
                   if (isPathEdge) {
-                    stroke = mode === 'play' ? (isDark ? "#d946ef" : "#c026d3") : (isDark ? "#10b981" : "#059669"); // Màu hồng cho chế độ Play
+                    stroke = mode === 'play' ? (isDark ? "#d946ef" : "#c026d3") : (isDark ? "#10b981" : "#059669"); 
                     strokeWidth = 6;
                   } else if (isCheckingEdge) {
                     stroke = isDark ? "#f59e0b" : "#d97706"; strokeWidth = 4; strokeDash = "6,4"; classes += " animate-[dash_1s_linear_infinite]";
@@ -1119,15 +1081,10 @@ export default function Home() {
                   }
 
                   return (
-                    <line
-                      key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y}
-                      stroke={stroke} strokeWidth={strokeWidth} strokeDasharray={strokeDash}
-                      className={classes} onPointerDown={(e) => onEdgePointerDown(e, edge.id)}
-                    />
+                    <line key={edge.id} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke={stroke} strokeWidth={strokeWidth} strokeDasharray={strokeDash} className={classes} onPointerDown={(e) => onEdgePointerDown(e, edge.id)} />
                   );
                 })}
 
-                {/* Vẽ mũi tên hướng đi trên ActivePath */}
                 {(activePath || []).length > 1 && activePath.map((nodeId, idx) => {
                   if (idx === 0) return null;
                   const prevNode = nodes.find(n => n.id === activePath[idx - 1]);
@@ -1145,14 +1102,11 @@ export default function Home() {
                   );
                 })}
 
-                {/* Vẽ Đỉnh */}
                 {nodes.map(node => {
                   const isStart = effectiveStartNodes.includes(node.id) && currentStepIndex < 0 && !viewingStaticPath;
                   const isInPath = (activePath || []).includes(node.id);
                   const isCurrent = currentActiveNode === node.id;
                   const isBacktracked = backtrackedNode === node.id;
-
-                  // Hiệu ứng Visual nếu node đang được Tap để chờ nối (Mobile/Desktop)
                   const isPendingEdge = mode === 'addEdge' && pendingEdgeSource === node.id;
 
                   let fill = nodeDefaultFill, stroke = nodeDefaultStroke, strokeW = 2, radius = 24, zIndexClass = "", strokeDash = "none";
@@ -1187,15 +1141,7 @@ export default function Home() {
                   }
 
                   return (
-                    // data-nodeid QUAN TRỌNG: để Drag & Drop elementFromPoint có thể nhận diện đỉnh dưới con trỏ
-                    <g
-                      key={node.id}
-                      data-nodeid={node.id}
-                      transform={`translate(${node.x}, ${node.y})`}
-                      onPointerDown={(e) => onNodePointerDown(e, node.id)}
-                      onPointerUp={(e) => onNodePointerUp(e, node.id)}
-                      className={`transition-all duration-300 ${interactiveClasses} ${zIndexClass}`}
-                    >
+                    <g key={node.id} data-nodeid={node.id} transform={`translate(${node.x}, ${node.y})`} onPointerDown={(e) => onNodePointerDown(e, node.id)} onPointerUp={(e) => onNodePointerUp(e, node.id)} className={`transition-all duration-300 ${interactiveClasses} ${zIndexClass}`}>
                       <circle r={radius} fill={fill} stroke={stroke} strokeWidth={strokeW} strokeDasharray={strokeDash} className="transition-all duration-300" />
                       <text textAnchor="middle" dominantBaseline="central" fill={mode === 'play' && isInPath ? "#ffffff" : textDefaultFill} className="font-bold select-none pointer-events-none text-sm">{node.label}</text>
                       {isStart && <text y={-35} textAnchor="middle" className={`text-[10px] font-black ${isDark ? 'fill-indigo-400' : 'fill-indigo-600'} pointer-events-none`}>GỐC</text>}
@@ -1205,43 +1151,44 @@ export default function Home() {
               </g>
             </svg>
 
-            {/* CONSOLE LOG BÊN DƯỚI CANVAS */}
             {showLogs && (
               <div style={{ height: logHeight }} className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 flex flex-col shadow-[0_-10px_20px_rgba(0,0,0,0.05)] dark:shadow-[0_-10px_20px_rgba(0,0,0,0.5)] relative z-20 shrink-0">
-
-                <div
-                  onPointerDown={(e) => { e.preventDefault(); setInteraction({ type: 'resizingLog' }); }}
-                  className="flex absolute top-0 left-0 w-full h-4 cursor-ns-resize z-30 hover:bg-blue-500/20 dark:hover:bg-blue-500/50 transition-colors justify-center items-center group"
-                >
+                <div onPointerDown={(e) => { e.preventDefault(); setInteraction({ type: 'resizingLog' }); }} className="flex absolute top-0 left-0 w-full h-4 cursor-ns-resize z-30 hover:bg-blue-500/20 dark:hover:bg-blue-500/50 transition-colors justify-center items-center group">
                   <GripHorizontal size={16} className="text-slate-400 dark:text-slate-500 opacity-30 group-hover:opacity-100" />
                 </div>
 
-                <div className="px-3 py-1.5 mt-2 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center text-base text-slate-500 dark:text-slate-400 shrink-0">
-                  <span className="flex items-center gap-1 font-bold"><Terminal size={18} /> SYSTEM LOG (Tiến trình duyệt)</span>
-                </div>
-                <div className="flex-1 p-3 overflow-y-auto font-mono text-xs space-y-1 bg-white dark:bg-slate-950">
-                  {steps.slice(0, currentStepIndex + 1).map((s, i) => (
-                    <div key={i} className={`
-                       ${s.type === 'visit' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-300'}
-                       ${s.type === 'backtrack' ? 'text-red-500 dark:text-red-400 line-through opacity-80' : ''}
-                       ${s.type === 'check_edge' ? 'text-amber-600 dark:text-amber-300' : ''}
-                       ${s.type === 'skip' ? 'text-slate-400 dark:text-slate-500' : ''}
-                       ${s.type === 'deadend' ? 'text-orange-600 dark:text-orange-500 bg-orange-100 dark:bg-orange-500/10 inline-block px-1 rounded' : ''}
-                       ${s.type === 'success' ? 'text-white font-bold bg-emerald-500 dark:bg-emerald-600 px-2 py-1 rounded inline-block my-1' : ''}
-                       ${s.type === 'info' ? 'text-blue-600 dark:text-blue-300' : ''}
-                       ${s.type === 'finish' ? 'text-fuchsia-600 dark:text-fuchsia-400 font-bold text-sm mt-2' : ''}
-                     `}>
-                      <span className="opacity-40 select-none mr-2">[{String(i).padStart(3, '0')}]</span>
-                      {s.action}
-                    </div>
-                  ))}
-                  {currentStepIndex < 0 && <div className="text-slate-500 dark:text-slate-600 italic text-base">Đang chờ lệnh chạy thuật toán...</div>}
-                  <div ref={logEndRef} />
+                {/* Bao bọc System Log để dịch lề khi Sidebar Trái trượt ra đè lên */}
+                <div 
+                  className="flex flex-col h-full transition-[padding] duration-300 ease-in-out"
+                  style={{ paddingLeft: isSidebarExpanded && window.innerWidth >= 768 ? leftPanelWidth - 80 : 0 }}
+                >
+                  <div className="px-3 py-1.5 mt-2 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center text-base text-slate-500 dark:text-slate-400 shrink-0">
+                    <span className="flex items-center gap-1 font-bold"><Terminal size={18} /> SYSTEM LOG (Tiến trình duyệt)</span>
+                  </div>
+                  <div className="flex-1 p-3 overflow-y-auto font-mono text-xs space-y-1 bg-white dark:bg-slate-950">
+                    {steps.slice(0, currentStepIndex + 1).map((s, i) => (
+                      <div key={i} className={`
+                         ${s.type === 'visit' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-300'}
+                         ${s.type === 'backtrack' ? 'text-red-500 dark:text-red-400 line-through opacity-80' : ''}
+                         ${s.type === 'check_edge' ? 'text-amber-600 dark:text-amber-300' : ''}
+                         ${s.type === 'skip' ? 'text-slate-400 dark:text-slate-500' : ''}
+                         ${s.type === 'deadend' ? 'text-orange-600 dark:text-orange-500 bg-orange-100 dark:bg-orange-500/10 inline-block px-1 rounded' : ''}
+                         ${s.type === 'success' ? 'text-white font-bold bg-emerald-500 dark:bg-emerald-600 px-2 py-1 rounded inline-block my-1' : ''}
+                         ${s.type === 'info' ? 'text-blue-600 dark:text-blue-300' : ''}
+                         ${s.type === 'finish' ? 'text-fuchsia-600 dark:text-fuchsia-400 font-bold text-sm mt-2' : ''}
+                       `}>
+                        <span className="opacity-40 select-none mr-2">[{String(i).padStart(3, '0')}]</span>
+                        {s.action}
+                      </div>
+                    ))}
+                    {currentStepIndex < 0 && <div className="text-slate-500 dark:text-slate-600 italic text-base">Đang chờ lệnh chạy thuật toán...</div>}
+                    <div ref={logEndRef} />
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* POPUP: KẾT QUẢ TÌM SIÊU TỐC */}
+            {/* MODAL: KẾT QUẢ TÌM SIÊU TỐC */}
             {showFastResultsModal && (
               <div className="absolute inset-0 bg-white/90 dark:bg-slate-950/90 backdrop-blur-sm z-50 flex flex-col p-4 md:p-8">
                 <div className="flex justify-between items-center mb-4 md:mb-6 shrink-0 pt-10 md:pt-0">
@@ -1250,17 +1197,12 @@ export default function Home() {
                   </h2>
                   <button onClick={() => setShowFastResultsModal(false)} className="p-2 bg-slate-200 dark:bg-slate-800 hover:bg-red-500 hover:text-white dark:text-white rounded transition shadow-sm"><X size={20} className="md:w-6 md:h-6" /></button>
                 </div>
-
                 <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-3 md:p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 content-start">
                   {fastResults.length === 0 ? (
                     <div className="col-span-full text-center text-slate-500 py-10">Không tìm thấy đường đi Hamilton nào trên bản đồ này!</div>
                   ) : (
                     fastResults.map((path, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => { setViewingStaticPath(path.path); setShowFastResultsModal(false); }}
-                        className="p-3 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-600 border border-slate-200 dark:border-slate-700 hover:border-indigo-400 rounded-lg text-left transition-all shadow-sm group"
-                      >
+                      <button key={idx} onClick={() => { setViewingStaticPath(path.path); setShowFastResultsModal(false); }} className="p-3 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-600 border border-slate-200 dark:border-slate-700 hover:border-indigo-400 rounded-lg text-left transition-all shadow-sm group">
                         <div className="text-xs text-slate-500 dark:text-slate-400 mb-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-200">Đường đi {idx + 1} (đỉnh {path.startNodeLabel})</div>
                         <div className="font-mono text-sm text-slate-800 dark:text-white flex flex-wrap items-center gap-1">
                           {path.path.map((n, i) => (
@@ -1276,9 +1218,58 @@ export default function Home() {
                 </div>
               </div>
             )}
+            
+            {/* MODAL: TẠO BẢN ĐỒ NGẪU NHIÊN */}
+            {showRandomModal && (
+              <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl p-5 md:p-6 w-full max-w-sm border border-slate-200 dark:border-slate-700 animate-[slideDownIn_0.3s_ease-out]">
+                  <div className="flex justify-between items-center mb-5 border-b border-slate-200 dark:border-slate-800 pb-3">
+                    <h2 className="text-lg font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+                      <Dices size={22} /> Cấu hình Map Random
+                    </h2>
+                    <button onClick={() => setShowRandomModal(false)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/20 rounded transition"><X size={20} /></button>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {/* Số lượng đỉnh tối thiểu */}
+                    <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">Đỉnh tối thiểu (Min: 3)</span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => handleMinNodesChange(randMinNodes - 1)} className="w-8 h-8 flex items-center justify-center bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 transition font-bold">-</button>
+                        <input type="number" min="3" max="29" value={randMinNodes} onChange={(e) => handleMinNodesChange(parseInt(e.target.value) || 3)} className="w-12 h-8 text-center border border-slate-300 dark:border-slate-600 rounded font-bold text-slate-800 dark:text-white bg-white dark:bg-slate-900 focus:outline-hidden focus:border-emerald-500 appearance-none m-0 p-0" />
+                        <button onClick={() => handleMinNodesChange(randMinNodes + 1)} className="w-8 h-8 flex items-center justify-center bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 transition font-bold">+</button>
+                      </div>
+                    </div>
+
+                    {/* Số lượng đỉnh tối đa */}
+                    <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                      <span className="text-sm font-bold text-slate-600 dark:text-slate-300">Đỉnh tối đa (Max: 30)</span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => handleMaxNodesChange(randMaxNodes - 1)} className="w-8 h-8 flex items-center justify-center bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 transition font-bold">-</button>
+                        <input type="number" min={randMinNodes + 1} max="30" value={randMaxNodes} onChange={(e) => handleMaxNodesChange(parseInt(e.target.value) || (randMinNodes + 1))} className="w-12 h-8 text-center border border-slate-300 dark:border-slate-600 rounded font-bold text-slate-800 dark:text-white bg-white dark:bg-slate-900 focus:outline-hidden focus:border-emerald-500 appearance-none m-0 p-0" />
+                        <button onClick={() => handleMaxNodesChange(randMaxNodes + 1)} className="w-8 h-8 flex items-center justify-center bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 transition font-bold">+</button>
+                      </div>
+                    </div>
+
+                    {/* Tỉ lệ tạo cạnh */}
+                    <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-sm font-bold text-slate-600 dark:text-slate-300">Mật độ sinh cạnh phụ</span>
+                        <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/40 px-2 py-0.5 rounded">{randEdgePercent}%</span>
+                      </div>
+                      <input type="range" min="2" max="70" value={randEdgePercent} onChange={(e) => setRandEdgePercent(parseInt(e.target.value))} className="w-full h-2 bg-slate-300 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer accent-emerald-500" />
+                      <p className="text-[10px] text-slate-500 mt-2 italic leading-tight">* Mặc định luôn có các cạnh tạo khung liên thông để đảm bảo không có đỉnh nào bị cô lập.</p>
+                    </div>
+
+                    <button onClick={generateRandomMap} className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-lg shadow-md transition-all flex justify-center items-center gap-2 mt-4">
+                      <Dices size={20} /> TẠO BẢN ĐỒ NGAY
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* === SIDEBAR PHẢI: BẢNG ĐIỀU KHIỂN & STACK === */}
           <div
             style={{ width: window.innerWidth >= 768 ? rightPanelWidth : '320px' }}
             className={`
@@ -1291,11 +1282,7 @@ export default function Home() {
             <button onClick={() => setShowMobileRight(false)} className="md:hidden absolute top-4 left-4 p-2 text-slate-500 hover:text-red-500 rounded-full bg-slate-100 dark:bg-slate-800 z-50">
               <X size={18} />
             </button>
-
-            <div
-              onPointerDown={(e) => { e.preventDefault(); setInteraction({ type: 'resizingRight' }); }}
-              className="hidden md:flex absolute top-0 -left-2 w-4 h-full cursor-col-resize z-30 hover:bg-blue-500/20 transition-colors justify-center items-center group"
-            >
+            <div onPointerDown={(e) => { e.preventDefault(); setInteraction({ type: 'resizingRight' }); }} className="hidden md:flex absolute top-0 -left-2 w-4 h-full cursor-col-resize z-30 hover:bg-blue-500/20 transition-colors justify-center items-center group">
               <div className="w-1 h-12 bg-slate-300 dark:bg-slate-600 opacity-0 group-hover:opacity-100 rounded-full transition-opacity"></div>
             </div>
 
@@ -1315,7 +1302,6 @@ export default function Home() {
                     <input type="checkbox" disabled={isPlayMode} checked={searchAllNodes} onChange={(e) => { setSearchAllNodes(e.target.checked); resetVisualizer(); }} className="accent-blue-500 w-4 h-4 disabled:cursor-not-allowed" />
                     <span>Tìm trên <b>Mọi đỉnh</b> thay vì Gốc</span>
                   </label>
-
                   <button disabled={isPlayMode} onClick={runFastGlobalSearch} className={`w-full bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-300 py-2 rounded border border-slate-300 dark:border-slate-700 text-sm font-bold flex items-center justify-center gap-2 transition shadow-sm ${isPlayMode ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-50 dark:hover:bg-blue-600 hover:text-blue-700 dark:hover:text-white hover:border-blue-400'}`}>
                     <Zap size={16} /> Tìm siêu tốc (Xuất List)
                   </button>
@@ -1353,7 +1339,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Stack Trực Quan Hóa */}
               <div className="flex-1 flex flex-col overflow-hidden relative bg-white dark:bg-transparent">
                 <div className="flex-1 p-4 overflow-y-auto relative">
                   <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2"><GitMerge size={14} /> Stack Trực Quan</h3>
@@ -1394,7 +1379,6 @@ export default function Home() {
                   )}
                 </div>
 
-                {/* Bảng Lịch Sử Kết Quả */}
                 <div className={`border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex flex-col transition-all duration-300 shrink-0 ${showResultsHistory ? 'h-48 md:h-56' : 'h-10'}`}>
                   <button onClick={() => setShowResultsHistory(!showResultsHistory)} className="px-3 md:px-4 py-2.5 bg-slate-100 dark:bg-slate-950 flex justify-between items-center text-[10px] md:text-sm font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer">
                     <span className="flex items-center gap-2"><List size={16} /> Kết Quả Đã Tìm ({foundPaths.length})</span>
@@ -1409,11 +1393,7 @@ export default function Home() {
                         foundPaths.map((s, i) => {
                           const isActive = viewingStaticPath === s.path;
                           return (
-                            <button
-                              key={i}
-                              onClick={() => setViewingStaticPath(s.path)}
-                              className={`w-full text-left text-xs p-2 rounded transition-all border shadow-sm ${isActive ? 'bg-emerald-100 dark:bg-emerald-500/20 border-emerald-300 dark:border-emerald-500/50 text-emerald-800 dark:text-emerald-300 font-bold' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'}`}
-                            >
+                            <button key={i} onClick={() => setViewingStaticPath(s.path)} className={`w-full text-left text-xs p-2 rounded transition-all border shadow-sm ${isActive ? 'bg-emerald-100 dark:bg-emerald-500/20 border-emerald-300 dark:border-emerald-500/50 text-emerald-800 dark:text-emerald-300 font-bold' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'}`}>
                               Đường đi {i + 1} (đỉnh {s.startNodeLabel})
                             </button>
                           );
@@ -1429,6 +1409,36 @@ export default function Home() {
       </div>
 
       <style>{`
+        /* --- CUSTOM GỌN GÀNG SCROLLBAR --- */
+        * {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+        }
+        .dark * {
+          scrollbar-color: rgba(71, 85, 105, 0.5) transparent;
+        }
+        
+        ::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+          background-color: rgba(148, 163, 184, 0.4);
+          border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+          background-color: rgba(148, 163, 184, 0.7);
+        }
+        .dark ::-webkit-scrollbar-thumb {
+          background-color: rgba(71, 85, 105, 0.5);
+        }
+        .dark ::-webkit-scrollbar-thumb:hover {
+          background-color: rgba(71, 85, 105, 0.8);
+        }
+
         @keyframes dash { to { stroke-dashoffset: -10; } }
         @keyframes slideIn { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); } }
         @keyframes shake { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(-3px, 0); } 75% { transform: translate(3px, 0); } }
@@ -1445,6 +1455,11 @@ export default function Home() {
            0% { opacity: 0; transform: translate(-50%, -20px); }
            100% { opacity: 1; transform: translate(-50%, 0); }
         }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+          -webkit-appearance: none; 
+          margin: 0; 
+        }
       `}</style>
     </div>
   );
@@ -1456,12 +1471,7 @@ function ToolBtn({ icon, label, mode, current, setMode, locked, activeClasses, i
   const activeStyle = activeClasses || defaultActiveClass;
 
   return (
-    <button
-      onClick={() => setMode(mode)} disabled={locked} title={label}
-      className={`w-full flex items-center ${isExpanded ? 'justify-start px-3' : 'justify-center px-0'} gap-3 py-2 md:py-2.5 rounded-lg border transition-all shadow-sm ${locked ? 'opacity-30 cursor-not-allowed border-transparent shadow-none' : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800'
-        } ${isActive ? activeStyle : 'border-transparent text-slate-600 dark:text-slate-400 bg-white dark:bg-transparent shadow-none'
-        }`}
-    >
+    <button onClick={() => setMode(mode)} disabled={locked} title={label} className={`w-full flex items-center ${isExpanded ? 'justify-start px-3' : 'justify-center px-0'} gap-3 py-2 md:py-2.5 rounded-lg border transition-all shadow-sm ${locked ? 'opacity-30 cursor-not-allowed border-transparent shadow-none' : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800'} ${isActive ? activeStyle : 'border-transparent text-slate-600 dark:text-slate-400 bg-white dark:bg-transparent shadow-none'}`}>
       <span className={`shrink-0 ${isActive ? "" : "opacity-80"}`}>{React.cloneElement(icon, { size: 20 })}</span>
       {isExpanded && <span className="text-xs md:text-[14px] font-medium flex-1 truncate text-left">{label}</span>}
     </button>
