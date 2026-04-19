@@ -8,7 +8,7 @@ import {
   Sun, Moon, Settings2, Gamepad2, RefreshCw, Dices, Loader2, StopCircle
 } from 'lucide-react';
 
-const STORAGE_KEY = 'hamiltonian_map_save_v10';
+const STORAGE_KEY = 'hamiltonian_map_save_v11';
 const THEME_KEY = 'hamiltonian_theme_mode';
 
 const MAP_LEVELS = [
@@ -61,13 +61,13 @@ export default function App() {
   const [rightPanelWidth, setRightPanelWidth] = useState(384); 
   const [logHeight, setLogHeight] = useState(200);
 
-  // --- HỆ THỐNG LOG CACHE IN-MEMORY CHO BACKTRACK ---
-  const allLogsRef = useRef([]); // Lưu trữ toàn bộ log Backtrack
-  const [visibleLogs, setVisibleLogs] = useState([]); 
+  // --- HỆ THỐNG LOG CACHE IN-MEMORY ---
+  const allLogsRef = useRef([]); 
   const [autoScrollLog, setAutoScrollLog] = useState(true);
+  const [logScrollTop, setLogScrollTop] = useState(0); // Cho cuộn ảo Log
 
   // --- CACHE IN-MEMORY CHO TÌM SIÊU TỐC ---
-  const fastSearchCacheRef = useRef({ hash: '', results: [], iters: 0, totalPaths: 0 });
+  const fastSearchCacheRef = useRef({}); // Lưu đa luồng (nhiều cache cho nhiều Hash map)
   const allFastResultsRef = useRef([]);
   const fastGridRef = useRef(null);
   const [fastGridScroll, setFastGridScroll] = useState(0);
@@ -90,7 +90,6 @@ export default function App() {
   const [viewingStaticPath, setViewingStaticPath] = useState(null);
 
   const svgRef = useRef(null);
-  const logEndRef = useRef(null);
   const logContainerRef = useRef(null);
   const pinchDistanceRef = useRef(null);
   const isPinching = useRef(false);
@@ -225,9 +224,9 @@ export default function App() {
     activeSearchIdRef.current++;
     
     allLogsRef.current = [];
-    setVisibleLogs([]);
     setCurrentStepData(null);
     setAutoScrollLog(true);
+    setLogScrollTop(0);
 
     setIsPlaying(false);
     setIsSkipping(false);
@@ -236,6 +235,7 @@ export default function App() {
     setFoundPaths([]);
     setGamePath([]); 
     allFastResultsRef.current = [];
+    setFastGridScroll(0);
     setForceRender(prev => prev + 1);
   };
 
@@ -271,13 +271,12 @@ export default function App() {
     }
 
     const newEdges = []; let edgeIdCounter = 1;
-    const connected = [newNodes[0].id]; const unconnected = newNodes.slice(1).map(n => n.id);
-
-    while (unconnected.length > 0) {
-      const uIndex = Math.floor(Math.random() * unconnected.length); const cIndex = Math.floor(Math.random() * connected.length);
-      const uNode = unconnected[uIndex]; const cNode = connected[cIndex];
-      newEdges.push({ id: `e${edgeIdCounter++}`, source: cNode, target: uNode });
-      connected.push(uNode); unconnected.splice(uIndex, 1);
+    
+    // 1. TẠO VÒNG TRÒN (CYCLE) ĐỂ ĐẢM BẢO LIÊN THÔNG VÀ 100% LUÔN CÓ ĐƯỜNG ĐI HAMILTON
+    for (let i = 0; i < N; i++) {
+      const u = newNodes[i].id;
+      const v = newNodes[(i + 1) % N].id;
+      newEdges.push({ id: `e${edgeIdCounter++}`, source: u, target: v });
     }
 
     const maxPossibleEdges = (N * (N - 1)) / 2; const remainingPossibleEdges = maxPossibleEdges - newEdges.length;
@@ -425,7 +424,7 @@ export default function App() {
         if (startNode === nodeId) setStartNode(null);
       } else if (mode === 'setStart' || mode === 'select') {
         if (startNode !== nodeId) { 
-          // Chỉ chọn gốc, truyền true để tránh nhảy sang Map Custom nếu đang ở Map mặc định
+          // Chỉ chọn gốc, không thay đổi level sang custom
           pushHistory(true); 
           setStartNode(nodeId); 
         }
@@ -479,38 +478,69 @@ export default function App() {
   const getLabel = (id) => nodes.find(n => n.id === id)?.label || id;
 
   // =========================================================================
-  // --- CACHE LOGIC CHO SYSTEM LOG (Chống tràn RAM, tự động lấy log cũ) ---
+  // --- VIRTUAL SCROLLING CHO SYSTEM LOG ---
   // =========================================================================
-  const pushLog = (step) => {
-    allLogsRef.current.push(step);
-    if (allLogsRef.current.length > 50000) {
-      allLogsRef.current.shift();
-    }
-    setCurrentStepData(step);
-    
-    if (autoScrollLog) {
-      setVisibleLogs(allLogsRef.current.slice(-500));
-    }
-  };
+  const LOG_ITEM_HEIGHT = 28;
+  const totalLogs = allLogsRef.current.length;
+  const totalLogHeight = totalLogs * LOG_ITEM_HEIGHT;
 
   const handleLogScroll = (e) => {
     const { scrollTop, scrollHeight, clientHeight } = e.target;
-    if (scrollHeight - scrollTop - clientHeight < 10) {
+    setLogScrollTop(scrollTop);
+    if (scrollHeight - scrollTop - clientHeight < 20) {
       setAutoScrollLog(true);
-      setVisibleLogs(allLogsRef.current.slice(-500));
     } else {
       setAutoScrollLog(false);
-      if (scrollTop === 0 && visibleLogs.length < allLogsRef.current.length) {
-        const currentLength = visibleLogs.length;
-        const newLength = Math.min(currentLength + 500, allLogsRef.current.length);
-        setVisibleLogs(allLogsRef.current.slice(-newLength));
-        e.target.scrollTop = 10;
-      }
     }
   };
 
+  // Cuộn xuống đáy tự động
+  useEffect(() => {
+    if (autoScrollLog && logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
+  }, [forceRender, autoScrollLog]);
+
+  const startLogRow = Math.max(0, Math.floor(logScrollTop / LOG_ITEM_HEIGHT) - 5);
+  const visibleLogCount = Math.ceil(logHeight / LOG_ITEM_HEIGHT) + 15;
+  const endLogRow = Math.min(totalLogs, startLogRow + visibleLogCount);
+  const visibleLogsVirtual = allLogsRef.current.slice(startLogRow, endLogRow);
+  const logOffsetY = startLogRow * LOG_ITEM_HEIGHT;
+
+  const renderLogAction = (s) => {
+    if (s.type === 'backtrack') {
+        const parts = s.action.split(/(\[.*?\])/g);
+        return parts.map((part, i) => {
+            if (part.startsWith('[') && part.endsWith(']')) {
+                return <span key={i} className="text-white bg-red-600 dark:bg-red-500 font-black px-1.5 py-0.5 mx-1 rounded text-[11px] shadow-sm">{part}</span>;
+            }
+            return part;
+        });
+    }
+    return s.action;
+  };
+
   // =========================================================================
-  // --- CORE ENGINE 1: ASYNC TIME-SLICED DFS CHO TÌM SIÊU TỐC (CHỐNG TREO) ---
+  // --- VIRTUAL SCROLLING TÌM SIÊU TỐC ---
+  // =========================================================================
+  const FAST_ITEM_HEIGHT = 88; // 76px item height + 12px gap
+  const totalFastItems = allFastResultsRef.current.length;
+  const totalFastRows = Math.ceil(totalFastItems / gridCols);
+  const totalFastHeight = totalFastRows * FAST_ITEM_HEIGHT;
+
+  const startFastRow = Math.max(0, Math.floor(fastGridScroll / FAST_ITEM_HEIGHT) - 2);
+  // Hiển thị thoải mái số phần tử để không bị chớp khi cuộn
+  const visibleFastRowsCount = Math.ceil(window.innerHeight / FAST_ITEM_HEIGHT) + 4;
+  const endFastRow = Math.min(totalFastRows, startFastRow + visibleFastRowsCount);
+  
+  const startFastIndex = startFastRow * gridCols;
+  const endFastIndex = Math.min(totalFastItems, endFastRow * gridCols);
+  const visibleFastResults = allFastResultsRef.current.slice(startFastIndex, endFastIndex);
+  const fastOffsetY = startFastRow * FAST_ITEM_HEIGHT;
+
+
+  // =========================================================================
+  // --- CORE ENGINE 1: ASYNC TIME-SLICED DFS CHO TÌM SIÊU TỐC ---
   // =========================================================================
   const runFastGlobalSearch = () => {
     if (isSearchingFast) {
@@ -523,18 +553,18 @@ export default function App() {
 
     const hash = getMapHash();
 
-    // RESTORE TỪ CACHE (Nếu map không thay đổi)
-    if (fastSearchCacheRef.current.hash === hash && fastSearchCacheRef.current.results.length > 0) {
+    // RESTORE TỪ CACHE
+    if (fastSearchCacheRef.current[hash] && fastSearchCacheRef.current[hash].results.length > 0) {
         resetVisualizer();
-        allFastResultsRef.current = [...fastSearchCacheRef.current.results];
-        setFastSearchMetrics({ iters: fastSearchCacheRef.current.iters, paths: fastSearchCacheRef.current.totalPaths });
+        allFastResultsRef.current = [...fastSearchCacheRef.current[hash].results];
+        setFastSearchMetrics({ iters: fastSearchCacheRef.current[hash].iters, paths: fastSearchCacheRef.current[hash].totalPaths });
         setShowFastResultsModal(true);
         setForceRender(prev => prev + 1);
         if (fastGridRef.current) fastGridRef.current.scrollTop = 0;
         return;
     }
 
-    resetVisualizer(); // Cấu hình UI và Reset bộ nhớ trước khi chạy
+    resetVisualizer(); 
 
     if (nodes.length > 1) {
       if (nodes.some(node => !edges.some(edge => edge.source === node.id || edge.target === node.id))) {
@@ -556,7 +586,6 @@ export default function App() {
     if (!showResultsHistory) setShowResultsHistory(true);
     if (window.innerWidth < 768) setShowMobileRight(false);
 
-    // Yield để Modal render mượt trước khi tính toán
     setTimeout(async () => {
       const adj = {};
       nodes.forEach(n => adj[n.id] = []);
@@ -614,8 +643,7 @@ export default function App() {
         setIsSearchingFast(false);
         setForceRender(prev => prev + 1);
 
-        fastSearchCacheRef.current = {
-            hash: getMapHash(),
+        fastSearchCacheRef.current[getMapHash()] = {
             results: [...allFastResultsRef.current],
             iters: iterations,
             totalPaths
@@ -631,19 +659,6 @@ export default function App() {
     setIsSearchingFast(false);
     showToast("Đã dừng tìm kiếm siêu tốc!");
   };
-
-  // --- VIRTUAL GRID CHO TÌM SIÊU TỐC ---
-  const FAST_ITEM_HEIGHT = 80; 
-  const totalFastItems = allFastResultsRef.current.length;
-  const totalFastRows = Math.ceil(totalFastItems / gridCols);
-  const totalFastHeight = totalFastRows * FAST_ITEM_HEIGHT;
-
-  const startFastRow = Math.max(0, Math.floor(fastGridScroll / FAST_ITEM_HEIGHT) - 2);
-  const startFastIndex = startFastRow * gridCols;
-  const endFastIndex = Math.min(totalFastItems, startFastIndex + 300);
-
-  const visibleFastResults = allFastResultsRef.current.slice(startFastIndex, endFastIndex);
-  const fastPaddingTop = startFastRow * FAST_ITEM_HEIGHT;
 
   // =========================================================================
   // --- CORE ENGINE 2: GENERATOR CHO TIẾN TRÌNH TRỰC QUAN (KHÔNG GIỚI HẠN) ---
@@ -675,7 +690,8 @@ export default function App() {
                 if (frame.path.length === nodes.length) {
                     foundCount++;
                     yield addStep({ type: 'success', path: [...frame.path], current: frame.u, startNodeLabel: getLabel(root), action: `=> TÌM THẤY ĐƯỜNG HAMILTON #${foundCount}: ${frame.path.map(p=>getLabel(p)).join('→')}` });
-                    yield addStep({ type: 'backtrack', path: [...frame.path], current: frame.path[frame.path.length - 2] || null, backtracked: frame.u, action: `Pop: Rút [${getLabel(frame.u)}] khỏi Stack.` });
+                    let poppedPath = frame.path.slice(0, -1);
+                    yield addStep({ type: 'backtrack', path: poppedPath, current: frame.path[frame.path.length - 2] || null, backtracked: frame.u, action: `Pop: Rút [${getLabel(frame.u)}] khỏi Stack.` });
                     stack.pop();
                     continue;
                 }
@@ -700,7 +716,8 @@ export default function App() {
                 }
                 stack.pop();
                 let parent = stack.length > 0 ? stack[stack.length - 1].u : null;
-                yield addStep({ type: 'backtrack', path: [...frame.path], current: parent, backtracked: frame.u, action: `Pop: Rút [${getLabel(frame.u)}] khỏi Stack.` });
+                let poppedPath = frame.path.slice(0, -1);
+                yield addStep({ type: 'backtrack', path: poppedPath, current: parent, backtracked: frame.u, action: `Pop: Rút [${getLabel(frame.u)}] khỏi Stack.` });
             }
         }
     }
@@ -729,7 +746,11 @@ export default function App() {
           stepGenRef.current = null;
         } else {
           const newStep = nextVal.value;
-          pushLog(newStep);
+          allLogsRef.current.push(newStep);
+          if (allLogsRef.current.length > 50000) allLogsRef.current.shift();
+          
+          setCurrentStepData(newStep);
+          setForceRender(prev => prev + 1);
 
           if (newStep.type === 'success') {
             setIsPlaying(false); 
@@ -744,7 +765,7 @@ export default function App() {
       }, speed);
     }
     return () => clearInterval(interval);
-  }, [isPlaying, speed, isSkipping, autoScrollLog]); 
+  }, [isPlaying, speed, isSkipping]); 
 
   const handleSkipToNextResult = async () => {
     if (!stepGenRef.current) return;
@@ -767,8 +788,6 @@ export default function App() {
       }
       
       lastStep = next.value;
-      
-      // LƯU VÀO CACHE KỂ CẢ KHI TUA NHANH
       allLogsRef.current.push(lastStep);
       if (allLogsRef.current.length > 50000) allLogsRef.current.shift();
 
@@ -782,7 +801,7 @@ export default function App() {
         });
         setViewingStaticPath(lastStep.path);
         setCurrentStepData(lastStep);
-        if (autoScrollLog) setVisibleLogs(allLogsRef.current.slice(-500));
+        setForceRender(prev => prev + 1);
         break;
       }
 
@@ -790,7 +809,7 @@ export default function App() {
       if (iters % 2000 === 0) {
         if (performance.now() - lastTime > 40) {
           setCurrentStepData(lastStep);
-          if (autoScrollLog) setVisibleLogs(allLogsRef.current.slice(-500));
+          setForceRender(prev => prev + 1);
           await new Promise(r => setTimeout(r, 0)); 
           lastTime = performance.now();
         }
@@ -805,12 +824,6 @@ export default function App() {
       setViewingStaticPath(null); setIsPlaying(true);
     }
   };
-
-  useEffect(() => {
-    if (showLogs && logEndRef.current && !isSkipping && autoScrollLog) {
-      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [visibleLogs, showLogs, isSkipping, autoScrollLog]);
 
   // =========================================================================
 
@@ -830,11 +843,16 @@ export default function App() {
     backtrackedNode = currentStepData.type === 'backtrack' ? currentStepData.backtracked : null;
   }
 
+  // Chỉnh null Pop animation nếu đang trong chế độ View kết quả
+  if (viewingStaticPath) {
+    backtrackedNode = null;
+  }
+
   const effectiveStartNodes = getEffectiveStartNodes();
-  const isPopping = currentStepData?.type === 'backtrack';
+  const isPopping = !viewingStaticPath && currentStepData?.type === 'backtrack';
   const isCurrentStepSuccess = currentStepData?.type === 'success';
   const isPlayMode = mode === 'play';
-  const isAlgorithmActive = isPlaying || isSkipping || (stepGenRef.current !== null && !isCurrentStepSuccess) || viewingStaticPath;
+  const isAlgorithmActive = isPlaying || isSkipping || (stepGenRef.current !== null && !isCurrentStepSuccess && !viewingStaticPath);
 
   const nodeDefaultFill = isDark ? "#1e293b" : "#ffffff";
   const nodeDefaultStroke = isDark ? "#475569" : "#cbd5e1";
@@ -982,9 +1000,12 @@ export default function App() {
                   }
 
                   const isCheckingEdge = checkingEdge && ((checkingEdge.u === source.id && checkingEdge.v === target.id) || (checkingEdge.v === source.id && checkingEdge.u === target.id));
+                  const isBacktrackEdge = isPopping && backtrackedNode && currentActiveNode && ((source.id === backtrackedNode && target.id === currentActiveNode) || (target.id === backtrackedNode && source.id === currentActiveNode));
+
                   let stroke = edgeDefaultStroke, strokeWidth = 3, strokeDash = "none", classes = "transition-all duration-300";
 
-                  if (isPathEdge) { stroke = mode === 'play' ? (isDark ? "#d946ef" : "#c026d3") : (isDark ? "#10b981" : "#059669"); strokeWidth = 6; } 
+                  if (isBacktrackEdge) { stroke = isDark ? "#ef4444" : "#f87171"; strokeWidth = 5; strokeDash = "6,4"; classes += " animate-pulse"; }
+                  else if (isPathEdge) { stroke = mode === 'play' ? (isDark ? "#d946ef" : "#c026d3") : (isDark ? "#10b981" : "#059669"); strokeWidth = 6; } 
                   else if (isCheckingEdge) { stroke = isDark ? "#f59e0b" : "#d97706"; strokeWidth = 4; strokeDash = "6,4"; classes += " animate-[dash_1s_linear_infinite]"; } 
                   else if (mode === 'remove' && !isAlgorithmActive && !viewingStaticPath) { classes += " hover:stroke-red-500 hover:stroke-[8px] cursor-pointer"; }
 
@@ -1011,20 +1032,21 @@ export default function App() {
                   const isCurrent = currentActiveNode === node.id;
                   const isBacktracked = backtrackedNode === node.id;
                   const isPendingEdge = mode === 'addEdge' && pendingEdgeSource === node.id;
+                  const isDeadendNode = currentStepData?.type === 'deadend' && currentStepData.current === node.id;
 
                   let fill = nodeDefaultFill, stroke = nodeDefaultStroke, strokeW = 2, radius = 24, zIndexClass = "", strokeDash = "none";
 
-                  if (isCurrent) {
+                  if (isCurrent && !isDeadendNode) {
                     fill = mode === 'play' ? (isDark ? "#d946ef" : "#c026d3") : (isDark ? "#f59e0b" : "#fbbf24"); 
                     stroke = mode === 'play' ? (isDark ? "#f0abfc" : "#a21caf") : (isDark ? "#fbbf24" : "#b45309"); strokeW = 4; radius = 28; 
                     zIndexClass = mode === 'play' ? (isDark ? `drop-shadow-[0_0_15px_rgba(217,70,239,0.6)]` : `drop-shadow-lg`) : (isDark ? `drop-shadow-[0_0_15px_rgba(245,158,11,0.6)]` : `drop-shadow-lg`);
                   } else if (isPendingEdge) {
                     fill = isDark ? "#1e3a8a" : "#eff6ff"; stroke = isDark ? "#60a5fa" : "#3b82f6"; strokeW = 4; radius = 26; zIndexClass = isDark ? `drop-shadow-[0_0_15px_rgba(59,130,246,0.6)]` : `drop-shadow-md`;
+                  } else if (isDeadendNode || isBacktracked) {
+                    fill = isDark ? "#ef4444" : "#f87171"; stroke = isDark ? "#f87171" : "#b91c1c"; strokeW = 4; radius = 28; zIndexClass = "drop-shadow-[0_0_15px_rgba(239,68,68,0.8)]";
                   } else if (isInPath) {
                     fill = mode === 'play' ? (isDark ? "#a21caf" : "#d946ef") : (isDark ? "#10b981" : "#34d399"); 
                     stroke = mode === 'play' ? (isDark ? "#d946ef" : "#86198f") : (isDark ? "#34d399" : "#047857"); strokeW = 3;
-                  } else if (isBacktracked) {
-                    fill = isDark ? "#ef4444" : "#f87171"; stroke = isDark ? "#f87171" : "#b91c1c"; strokeW = 2; zIndexClass = "animate-[shake_0.5s_ease-in-out]";
                   } else if (isStart) {
                     stroke = startNodeStroke; strokeW = 4;
                   }
@@ -1057,42 +1079,41 @@ export default function App() {
                 <div className="flex flex-col h-full transition-[padding] duration-300 ease-in-out" style={{ paddingLeft: isSidebarExpanded && window.innerWidth >= 768 ? leftPanelWidth - 80 : 0 }}>
                   <div className="px-3 py-1.5 mt-2 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center text-base text-slate-500 dark:text-slate-400 shrink-0">
                     <span className="flex items-center gap-1 font-bold"><Terminal size={18} /> SYSTEM LOG (Tiến trình duyệt)</span>
-                    <span className="text-[10px] bg-slate-200 dark:bg-slate-800 px-2 py-0.5 rounded-full">{allLogsRef.current.length > 500 ? 'Hiển thị 500 dòng (Cuộn lên để xem cũ)' : `Hiển thị ${allLogsRef.current.length} dòng`}</span>
+                    <span className="text-[10px] bg-slate-200 dark:bg-slate-800 px-2 py-0.5 rounded-full">{totalLogs > 500 ? 'Hiển thị 500 dòng (Cuộn lên để tải cũ)' : `Hiển thị ${totalLogs} dòng`}</span>
                   </div>
                   
-                  {/* Container gán Event Scroll để auto tải Log cũ */}
-                  <div ref={logContainerRef} onScroll={handleLogScroll} className="flex-1 p-3 overflow-y-auto font-mono text-xs space-y-1 bg-white dark:bg-slate-950 relative">
+                  {/* VIRTUAL LOG CONTAINER */}
+                  <div ref={logContainerRef} onScroll={handleLogScroll} className="flex-1 p-2 overflow-y-auto font-mono text-xs bg-white dark:bg-slate-950 relative">
                     
-                    {visibleLogs.length === 0 && !isSkipping && <div className="text-slate-500 dark:text-slate-600 italic text-base">Đang chờ lệnh chạy thuật toán...</div>}
+                    {totalLogs === 0 && !isSkipping && <div className="text-slate-500 dark:text-slate-600 italic px-2">Đang chờ lệnh chạy thuật toán...</div>}
                     
-                    {visibleLogs.map((s, i) => (
-                      <div key={`log-${s.id}`} className={`
-                         ${s.type === 'visit' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-300'}
-                         ${s.type === 'backtrack' ? 'text-red-500 dark:text-red-400 line-through opacity-80' : ''}
-                         ${s.type === 'check_edge' ? 'text-amber-600 dark:text-amber-300' : ''}
-                         ${s.type === 'skip' ? 'text-slate-400 dark:text-slate-500' : ''}
-                         ${s.type === 'deadend' ? 'text-orange-600 dark:text-orange-500 bg-orange-100 dark:bg-orange-500/10 inline-block px-1 rounded' : ''}
-                         ${s.type === 'success' ? 'text-white font-bold bg-emerald-500 dark:bg-emerald-600 px-2 py-1 rounded inline-block my-1' : ''}
-                         ${s.type === 'info' ? 'text-blue-600 dark:text-blue-300' : ''}
-                         ${s.type === 'finish' ? 'text-fuchsia-600 dark:text-fuchsia-400 font-bold text-sm mt-2' : ''}
-                       `}>
-                        <span className="opacity-40 select-none mr-2">[{s.id > 0 ? s.id : '-'}]</span>
-                        {s.action}
-                      </div>
-                    ))}
-                    
-                    {isSkipping && (
-                      <div className="text-amber-500 dark:text-amber-400 font-bold text-sm mt-4 mb-2 animate-pulse flex items-center gap-2">
-                        <Loader2 size={16} className="animate-spin" /> Đang tua nhanh (Kết quả vẫn được lưu vào log ngầm)...
+                    {totalLogs > 0 && (
+                      <div style={{ height: `${totalLogHeight}px`, position: 'relative' }}>
+                        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${logOffsetY}px)` }}>
+                          {visibleLogsVirtual.map(s => (
+                            <div key={`log-${s.id}`} style={{ height: `${LOG_ITEM_HEIGHT}px` }} className={`flex items-center px-1 truncate
+                               ${s.type === 'visit' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-300'}
+                               ${s.type === 'backtrack' ? 'text-red-500 font-bold bg-red-50/80 dark:bg-red-900/20' : ''}
+                               ${s.type === 'check_edge' ? 'text-amber-600 dark:text-amber-300' : ''}
+                               ${s.type === 'skip' ? 'text-slate-400 dark:text-slate-500' : ''}
+                               ${s.type === 'success' ? 'text-white font-bold bg-emerald-500 dark:bg-emerald-600' : ''}
+                               ${s.type === 'info' ? 'text-blue-600 dark:text-blue-300' : ''}
+                             `}>
+                              <span className="opacity-40 select-none w-10 shrink-0">[{s.id > 0 ? s.id : '-'}]</span>
+                              <span className="truncate flex-1 flex items-center">
+                                {s.type === 'deadend' ? <span className="bg-orange-100 text-orange-600 dark:bg-orange-500/10 dark:text-orange-500 px-1 rounded">{s.action}</span> : renderLogAction(s)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
-                    <div ref={logEndRef} />
                   </div>
                 </div>
               </div>
             )}
 
-            {/* MODAL: KẾT QUẢ TÌM SIÊU TỐC - TÍCH HỢP VIRTUAL SCROLLING */}
+            {/* MODAL: KẾT QUẢ TÌM SIÊU TỐC - TÍCH HỢP VIRTUAL SCROLLING KHÔNG GIẬT */}
             {showFastResultsModal && (
               <div className="absolute inset-0 bg-white/90 dark:bg-slate-950/90 backdrop-blur-sm z-50 flex flex-col p-4 md:p-8">
                 <div className="flex justify-between items-center mb-4 md:mb-6 shrink-0 pt-10 md:pt-0">
@@ -1128,12 +1149,12 @@ export default function App() {
                     </div>
                   ) : (
                     <div style={{ height: `${totalFastHeight}px`, position: 'relative' }}>
-                      <div style={{ position: 'absolute', top: `${fastPaddingTop}px`, left: 0, right: 0, padding: '12px' }}>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '12px', transform: `translateY(${fastOffsetY}px)` }}>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3" style={{ gridAutoRows: '76px' }}>
                           {visibleFastResults.map((path, relativeIdx) => {
                             const actualIdx = startFastIndex + relativeIdx;
                             return (
-                              <button key={actualIdx} onClick={() => { setViewingStaticPath(path.path); setShowFastResultsModal(false); }} className="p-3 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-600 border border-slate-200 dark:border-slate-700 hover:border-indigo-400 rounded-lg text-left transition-all shadow-sm group">
+                              <button key={actualIdx} onClick={() => { setViewingStaticPath(path.path); setShowFastResultsModal(false); }} className="p-3 w-full h-full bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-600 border border-slate-200 dark:border-slate-700 hover:border-indigo-400 rounded-lg text-left transition-all shadow-sm group">
                                 <div className="text-xs text-slate-500 dark:text-slate-400 mb-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-200">Đường đi {actualIdx + 1} (đỉnh {path.startNodeLabel})</div>
                                 <div className="font-mono text-sm text-slate-800 dark:text-white flex flex-wrap items-center gap-1">
                                   {path.path.map((n, i) => (
@@ -1273,42 +1294,48 @@ export default function App() {
 
               <div className="flex-1 flex flex-col overflow-hidden relative bg-white dark:bg-transparent">
                 <div className="flex-1 p-4 overflow-y-auto relative">
-                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2"><GitMerge size={14} /> Stack Trực Quan</h3>
-                  {viewingStaticPath ? (
-                    <div className="text-emerald-700 dark:text-emerald-400 text-sm p-4 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 rounded text-center font-medium shadow-sm">
-                      Đang xem lại Kết quả.<br />Hãy bấm "Reset" để bắt đầu tìm kiếm mới.
-                    </div>
-                  ) : (
-                    <div className="relative pt-2">
-                      {(activePath || []).length === 0 && !isPopping && <div className="text-slate-500 dark:text-slate-600 text-sm italic text-center py-4 border border-dashed border-slate-300 dark:border-slate-700 rounded">Stack trống</div>}
-
-                      {isPopping && backtrackedNode && (
-                        <div key={`pop-${currentStepData?.id}`} className="absolute top-2 left-0 w-full flex items-center gap-2 md:gap-3 animate-[slideUpOut_0.5s_ease-out_forwards] z-10 h-10 md:h-12">
-                          <div className="w-5 md:w-6 text-right text-[10px] md:text-xs text-slate-400 dark:text-slate-500 font-mono">#{activePath.length + 1}</div>
-                          <div className="flex-1 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded p-2 flex items-center gap-2 md:gap-3 shadow-sm h-full box-border">
-                            <div className="w-5 h-5 md:w-6 md:h-6 rounded bg-red-100 dark:bg-red-500/20 border border-red-300 dark:border-red-500/50 text-red-600 dark:text-red-400 flex items-center justify-center font-bold text-[10px] md:text-xs">{getLabel(backtrackedNode)}</div>
-                            <span className="text-xs md:text-sm text-red-600 dark:text-red-300 font-medium">Pop (Xóa khỏi Stack)</span>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className={`flex flex-col gap-2 transition-all duration-500 ${isPopping ? 'translate-y-12 md:translate-y-14' : 'translate-y-0'}`}>
-                        {(activePath || []).slice().reverse().map((nodeId, idx) => {
-                          const actualStackIndex = activePath.length - 1 - idx;
-                          const isNewest = !isPopping && idx === 0;
-                          return (
-                            <div key={`stack-${nodeId}-${actualStackIndex}`} className={`flex items-center gap-2 md:gap-3 h-10 md:h-12 ${isNewest ? 'animate-[slideDownIn_0.3s_ease-out_forwards]' : ''}`}>
-                              <div className="w-5 md:w-6 text-right text-[10px] md:text-xs text-slate-400 dark:text-slate-500 font-mono">#{actualStackIndex + 1}</div>
-                              <div className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-2 flex items-center gap-2 md:gap-3 shadow-sm h-full box-border">
-                                <div className="w-5 h-5 md:w-6 md:h-6 rounded bg-blue-100 dark:bg-blue-500/20 border border-blue-300 dark:border-blue-500/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-[10px] md:text-xs">{getLabel(nodeId)}</div>
-                                <span className="text-xs md:text-sm text-slate-700 dark:text-slate-300 font-medium">Nằm trong Stack</span>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
+                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-2"><GitMerge size={14} /> Stack Trực Quan</h3>
+                  
+                  {/* TEXT NHỎ THÔNG BÁO ĐANG XEM LẠI ĐƯỜNG ĐI */}
+                  {viewingStaticPath && (
+                     <div className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 mb-3 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1 rounded inline-block border border-emerald-200 dark:border-emerald-800">
+                       {(() => {
+                         let idx = foundPaths.findIndex(p => p.path.join() === viewingStaticPath.join());
+                         if (idx === -1) idx = allFastResultsRef.current.findIndex(p => p.path.join() === viewingStaticPath.join());
+                         return `Đang xem lại đường đi số ${idx >= 0 ? idx + 1 : '?'}`;
+                       })()}
+                     </div>
                   )}
+
+                  <div className="relative pt-2">
+                    {(activePath || []).length === 0 && !isPopping && <div className="text-slate-500 dark:text-slate-600 text-sm italic text-center py-4 border border-dashed border-slate-300 dark:border-slate-700 rounded">Stack trống</div>}
+
+                    {isPopping && backtrackedNode && (
+                      <div key={`pop-${currentStepData?.id}`} className="absolute top-2 left-0 w-full flex items-center gap-2 md:gap-3 animate-[slideUpOut_0.5s_ease-out_forwards] z-10 h-10 md:h-12">
+                        <div className="w-5 md:w-6 text-right text-[10px] md:text-xs text-slate-400 dark:text-slate-500 font-mono">#{activePath.length + 1}</div>
+                        <div className="flex-1 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded p-2 flex items-center gap-2 md:gap-3 shadow-sm h-full box-border">
+                          <div className="w-5 h-5 md:w-6 md:h-6 rounded bg-red-500 dark:bg-red-600 border border-red-600 dark:border-red-700 text-white flex items-center justify-center font-bold text-[10px] md:text-xs shadow-inner">{getLabel(backtrackedNode)}</div>
+                          <span className="text-xs md:text-sm text-red-600 dark:text-red-300 font-bold">Pop (Rút khỏi Stack)</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className={`flex flex-col gap-2 transition-all duration-500 ${isPopping ? 'translate-y-12 md:translate-y-14' : 'translate-y-0'}`}>
+                      {(activePath || []).slice().reverse().map((nodeId, idx) => {
+                        const actualStackIndex = activePath.length - 1 - idx;
+                        const isNewest = !isPopping && idx === 0 && !viewingStaticPath;
+                        return (
+                          <div key={`stack-${nodeId}-${actualStackIndex}`} className={`flex items-center gap-2 md:gap-3 h-10 md:h-12 ${isNewest ? 'animate-[slideDownIn_0.3s_ease-out_forwards]' : ''}`}>
+                            <div className="w-5 md:w-6 text-right text-[10px] md:text-xs text-slate-400 dark:text-slate-500 font-mono">#{actualStackIndex + 1}</div>
+                            <div className="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-2 flex items-center gap-2 md:gap-3 shadow-sm h-full box-border">
+                              <div className="w-5 h-5 md:w-6 md:h-6 rounded bg-blue-100 dark:bg-blue-500/20 border border-blue-300 dark:border-blue-500/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-[10px] md:text-xs">{getLabel(nodeId)}</div>
+                              <span className="text-xs md:text-sm text-slate-700 dark:text-slate-300 font-medium">Nằm trong Stack</span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
                 </div>
 
                 <div className={`border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex flex-col transition-all duration-300 shrink-0 ${showResultsHistory ? 'h-48 md:h-56' : 'h-10'}`}>
